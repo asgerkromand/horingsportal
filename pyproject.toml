@@ -8,12 +8,15 @@ dependencies = [
     "beautifulsoup4==4.12.2",
     "camelot-py==0.11.0",
     "ghostscript==0.7",
+    "horing",
     "lxml==4.9.3",
     "numpy==1.26.1",
     "ocrmypdf==15.4.0",
+    "openai>=1.61.0",
     "opencv-python==4.8.1.78",
     "openpyxl==3.1.2",
     "pandas==2.1.2",
+    "pathlib>=1.0.1",
     "pdfplumber==0.10.3",
     "pymupdf==1.23.6",
     "requests==2.31.0",
@@ -24,3 +27,6 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+horing = { workspace = true }

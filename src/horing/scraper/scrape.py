@@ -146,7 +146,7 @@ class HPScraper:
         else:
             # Get the hearing-id of the folders already created
             done = os.listdir(mainpath)
-            done = [int(x) for x in done]
+            done = [int(x) for x in done if x.isnumeric()]
             desc = "Populating folders"
 
         # Loop over the rest of the hearing-ids
