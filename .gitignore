@@ -175,5 +175,5 @@ cython_debug/
 
 # data files
 data/
-test/
+test_files/
 notes/
