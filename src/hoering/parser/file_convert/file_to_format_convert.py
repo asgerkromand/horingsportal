@@ -7,13 +7,12 @@ from PIL import Image
 import shutil
 import argparse
 from tqdm import tqdm  # For progress bar
+from hoering.parser.file_convert.resources.msg_conversion import convert_msg_input
 
-# Setup logging
-logging.basicConfig(
-    filename="conversion_errors.log",
-    level=logging.ERROR,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# PROBLEMS
+# When saving to .png the files are not placed in the subfolder
+# Problems with saving to jpg. An error occurs..
+
 
 def count_folders_with_matching_files(data_dir, patterns):
     """Counts the number of unique folders that contain files matching any of the patterns."""
@@ -48,7 +47,7 @@ def convert_to_format(input_path, output_format, output_dir, data_dir, patterns)
             return
 
         # Preserve original file-domain in output filename
-        original_file_name = input_path.stem
+        original_file_name = normalize_special_characters(input_path.stem)
         original_file_extension = ext[1:]
 
         if ext in ['.doc', '.docx', '.rtf', '.txt', '.htm', '.html', '.mht', '.xlsx', '.xls']:
@@ -58,9 +57,7 @@ def convert_to_format(input_path, output_format, output_dir, data_dir, patterns)
                 convert_pdf_to_images(pdf_output, output_format, output_dir)
 
         elif ext in ['.msg', '.oft']:
-            converted = output_file.with_suffix(".eml")
-            subprocess.run(["msgconvert", "--outfile", str(converted), str(input_path)], check=True)
-            subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(pdf_output.parent), str(converted)], check=True)
+            convert_msg_input(input_path, output_format, output_dir)
             if output_format in ['png', 'jpg']:
                 convert_pdf_to_images(pdf_output, output_format, output_dir)
 
@@ -102,6 +99,12 @@ def convert_pdf_to_images(pdf_path, image_format, output_dir):
     for i, img in enumerate(images):
         img.save(Path(output_dir) / f"{original_file_name}_{original_file_extension}_{i}.{image_format}", image_format.upper())
 
+def normalize_special_characters(filename):
+    """Normalize specific special characters in filenames."""
+    # Replace occurrences of 'h�' or 'H�' with 'hø' or 'Hø'
+    normalized_filename = filename.replace('h�', 'hø').replace('H�', 'Hø')
+    return normalized_filename
+
 def main():
     parser = argparse.ArgumentParser(description="Convert files to pdf, png, or jpg.")
     parser.add_argument("--format", choices=['pdf', 'png', 'jpg'], required=True, help="Output format: pdf, png, or jpg")
@@ -112,7 +115,16 @@ def main():
     args = parser.parse_args()
     patterns = args.patterns.split(",")  # Convert pattern string to list
 
-    Path(args.output_dir).mkdir(exist_ok=True)
+    # Make a subfolder called hearing_answer_to_{format} in the output directory
+    args.output_dir = Path(args.output_dir) / f"hearing_answer_to_{args.format}"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the logging file in the output directory
+    logging.basicConfig(
+        filename=args.output_dir / "conversion_errors.log",
+        level=logging.ERROR,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
 
     # Count how many folders need to be processed
     num_folders_to_process = count_folders_with_matching_files(args.data_dir, patterns)

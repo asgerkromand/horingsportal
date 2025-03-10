@@ -248,7 +248,7 @@ def convert_pdf_to_image(pdf_file: Path, output_dir: Path, file_stem: str, outpu
     except Exception as e:
         logging.error(f"Error converting {pdf_file} to image: {e}")
 
-def process_input(input_path: str, output_base_dir: str, output_format: str) -> None:
+def convert_msg_input(input_path: str, output_base_dir: str, output_format: str) -> None:
     """Processes the input path (file or folder) and manages output structure."""
     input_path = Path(input_path)
     output_base_dir = Path(output_base_dir)
@@ -297,4 +297,4 @@ if __name__ == "__main__":
     parser.add_argument("--format", choices=["pdf", "png", "jpg"], default="pdf", help="Output format (default: pdf)")
 
     args = parser.parse_args()
-    process_input(args.input, args.output_dir, args.format)
+    convert_msg_input(args.input, args.output_dir, args.format)
