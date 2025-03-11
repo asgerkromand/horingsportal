@@ -7,12 +7,11 @@ from PIL import Image
 import shutil
 import argparse
 from tqdm import tqdm  # For progress bar
-from hoering.parser.file_convert.resources.msg_conversion import convert_msg_input
-
-# PROBLEMS
-# When saving to .png the files are not placed in the subfolder
-# Problems with saving to jpg. An error occurs..
-
+from hoering.parser.file_convert.resources.msg_oft_conversion import convert_msg_input
+from bs4 import BeautifulSoup
+import unicodedata
+import ftfy  # Install with: pip install ftfy
+import zipfile
 
 def count_folders_with_matching_files(data_dir, patterns):
     """Counts the number of unique folders that contain files matching any of the patterns."""
@@ -31,74 +30,37 @@ def count_folders_with_matching_files(data_dir, patterns):
 def convert_to_format(input_path, output_dir, output_format, patterns):
     """Convert different file types to the specified format (pdf, png, or jpg)."""
     case_name = input_path.parent.name
-    
+
     try:
         ext = input_path.suffix.lower()
 
-        # Skip files that don't match the patterns
-        if not any(pattern.lower() in input_path.name.lower() for pattern in patterns):
-            return
+        if ext in [".doc", ".docx", ".rtf", ".txt", ".htm", ".mht"]:
+            if output_format == "mht":
+                logging.warning(
+                    f"Skipping MHT conversion for {input_path} in folder ID: {case_name}"
+                )
+                return
+            else:
+                doc_to_pdf(input_path, output_dir)
 
-        # Preserve original file-domain in output filename
-        original_file_name = normalize_special_characters(input_path.stem)
-        original_file_extension = ext[1:]
-
-        if ext in [
-            ".doc",
-            ".docx",
-            ".rtf",
-            ".txt",
-            ".htm",
-            ".html",
-            ".mht",
-            ".xlsx",
-            ".xls",
-        ]:
-            pdf_output = output_dir.with_suffix(".pdf")
-            subprocess.run(
-                [
-                    "soffice",
-                    "--headless",
-                    "--convert-to",
-                    "pdf",
-                    "--outdir",
-                    str(pdf_output.parent),
-                    str(input_path),
-                ],
-                check=True,
-            )
-            if output_format in ["png", "jpg"]:
-                convert_pdf_to_images(pdf_output, output_format, output_dir)
+        elif ext in [".ppt"]:
+            pass # Not implemented
 
         elif ext in [".msg", ".oft"]:
             convert_msg_input(input_path, output_dir, output_format, patterns)
 
-        elif ext in [".tif", ".tiff", ".jpg", ".jpeg", ".png"]:
-            images = (
-                convert_from_path(str(input_path))
-                if ext in [".tif", ".tiff"]
-                else [Image.open(input_path)]
-            )
-            if output_format == "pdf":
-                images[0].save(
-                    output_dir, save_all=True, append_images=images[1:]
-                )
-            else:
-                for i, img in enumerate(images):
-                    img.save(
-                        Path(output_dir)
-                        / f"{original_file_name}_{original_file_extension}_{i}.{output_format}",
-                        output_format.upper(),
-                    )
+        elif ext in [".tif", ".jpg", ".jpeg", ".png"]:
+            image_to_pdf(input_path, output_dir, output_format)
 
         elif ext in [".zip"]:
-            unzip_path = Path(output_dir) / input_path.stem
-            shutil.unpack_archive(str(input_path), unzip_path)
-            for file in Path(unzip_path).rglob("*"):
-                convert_to_format(file, output_format, output_dir, patterns)
+            zip_to_pdf(input_path, output_dir, output_format, patterns)
 
         elif ext in [".pdf"]:
             shutil.copy(input_path, output_dir)
+
+        elif ext in [".xls", ".xlsx"]:
+            xls_to_pdf(input_path, output_dir)
+
         else:
             logging.warning(
                 f"Skipping unknown format: {input_path} in folder ID: {case_name}"
@@ -113,6 +75,112 @@ def convert_to_format(input_path, output_dir, output_format, patterns):
             f"Unexpected error processing {input_path} in folder ID: {case_name}: {e}"
         )
 
+def zip_to_pdf(zip_path, output_dir, output_format, patterns):
+    """Handle zip file extraction and conversion."""
+
+    # Create a temporary folder to unzip the contents of the zip file
+    temp_extract_dir = output_dir / "temp_unzip"
+    temp_extract_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a new output directory
+    new_output_dir = output_dir.parent
+
+    try:
+        # Unzip the contents to the temporary directory
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_extract_dir)
+        
+        # Walk through the unzipped contents (including subfolders)
+        for root, _, files in os.walk(temp_extract_dir):
+            for file in files:
+                file_path = Path(root) / file
+                
+                # Check if the file matches the patterns
+                if any(pattern.lower() in file.lower() for pattern in patterns):
+                    # Create a subfolder in the output directory with the file's name (NOT the ZIP's name)
+                    output_subfolder = new_output_dir / file_path.stem
+                    output_subfolder.mkdir(parents=True, exist_ok=True)
+                    
+                    # Convert the file to the desired format
+                    convert_to_format(file_path, output_subfolder, output_format, patterns)
+
+        # Remove the temporary directory
+        shutil.rmtree(temp_extract_dir.parent)
+        
+    except Exception as e:
+        logging.error(f"Error processing zip file {zip_path}: {e}")
+
+def image_to_pdf(input_path, output_dir, output_format):
+    """Convert an .tif, .jpg,. .jpeg, .png to a PDF file."""
+    images = [Image.open(input_path)]
+    if output_format == "pdf":
+        images[0].save(
+            Path(output_dir) / f"{input_path.stem}.pdf", "PDF", resolution=100.0, save_all=True
+        )
+    elif output_format in ["png", "jpg"]:
+        for i, img in enumerate(images):
+            img.save(
+                Path(output_dir)
+                / f"{input_path.stem}_{input_path.suffix[1:]}_{i}.{output_format}",
+                output_format.upper(),
+            )
+
+def convert_txt_to_utf8(input_path):
+    """Ensure TXT file is UTF-8 encoded to prevent character loss."""
+    try:
+        with open(input_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        with open(input_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except UnicodeDecodeError:
+        with open(input_path, "r", encoding="windows-1252") as f:
+            content = f.read()
+        with open(input_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+def convert_doc_to_pdf(input_path, output_dir):
+    """Convert standard document formats (.txt, .doc, .docx, etc.) to PDF."""
+    subprocess.run(
+        [
+            "soffice", "--headless", "--convert-to", "pdf",
+            "--outdir", str(output_dir), str(input_path)
+        ],
+        check=True,
+    )
+    return Path(output_dir) / f"{input_path.stem}.pdf"
+
+def doc_to_pdf(input_path, output_dir):
+    """Convert documents (.txt, .docx, .mht, etc.) to PDF."""
+    input_path, output_dir = Path(input_path), Path(output_dir)
+
+    # File handlers mapped by extension
+    conversion_map = {
+        #".mht": convert_mht_to_pdf, # Not implemented
+        ".txt": lambda p, o: (convert_txt_to_utf8(p), convert_doc_to_pdf(p, o))[1],  # Ensure UTF-8 first
+    }
+
+    convert_function = conversion_map.get(input_path.suffix.lower(), convert_doc_to_pdf)
+    pdf_output = convert_function(input_path, output_dir)
+
+    return pdf_output
+
+def xls_to_pdf(input_path, output_dir):
+    """Convert a .xls, .xlsx to a PDF file."""
+    pdf_output = output_dir.with_suffix(".pdf")
+    subprocess.run(
+        [
+            "soffice",
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(pdf_output.parent),
+            str(input_path),
+        ],
+        check=True,
+    )
+
+
 def convert_pdf_to_images(pdf_path, image_format, output_dir):
     """Convert a PDF file to PNG or JPG images."""
     images = convert_from_path(pdf_path)
@@ -126,17 +194,23 @@ def convert_pdf_to_images(pdf_path, image_format, output_dir):
             image_format.upper(),
         )
 
-def normalize_special_characters(filename):
-    """Normalize specific special characters in filenames."""
-    # Replace occurrences of 'h�' or 'H�' with 'hø' or 'Hø'
-    normalized_filename = filename.replace("h�", "hoe").replace("H�", "Hoe")
-    return normalized_filename
-
 def clean_unwanted_files(output_case_folder, output_format):
     for root, _, files in os.walk(output_case_folder):
         for file in files:
             if not file.lower().endswith(f".{output_format}"):
                 os.remove(Path(root) / file)
+
+def manual_fix_filename(filepath):
+    """Manually fix known corrupted characters in filenames."""
+    filename = filepath.name
+    fixed_filename = filename.replace("�", "oe").replace("H�ringssvar", "Hoeringssvar")
+    
+    if fixed_filename != filename:
+        new_path = filepath.parent / fixed_filename
+        os.rename(filepath, new_path)
+        new_filename = new_path.name
+        return new_path, new_filename
+    return filepath, filename
 
 def main():
     parser = argparse.ArgumentParser(description="Convert files to pdf, png, or jpg.")
@@ -154,8 +228,8 @@ def main():
     )
     parser.add_argument(
         "--patterns",
-        help="Comma-separated list of filename patterns to match (e.g., 'ringssvar,ringsvar')",
-        default="ringssvar,ringsvar",
+        help="Comma-separated list of filename patterns to match (e.g., 'ringssvar,ringsvar,svar')",
+        default="ingssvar,ingsvar,svar",
     )
 
     args = parser.parse_args()
@@ -184,10 +258,6 @@ def main():
     # Count how many folders need to be processed
     num_folders_to_process = count_folders_with_matching_files(input_dir, patterns)
 
-    if num_folders_to_process == 0:
-        print("No matching files found. Exiting.")
-        return
-
     # Display progress bar using tqdm
     with tqdm(
         total=num_folders_to_process, desc="Processing Folders", unit="folder"
@@ -196,45 +266,36 @@ def main():
             subfolder_has_valid_files = (
                 False  # Track if a valid file exists in the subfolder
             )
-            
+
             output_case_folder = output_format_dir / Path(root).name
             output_case_folder.mkdir(parents=True, exist_ok=True)
 
             for file in files:
+                file_path, file = manual_fix_filename(Path(root) / file)
                 if any(pattern.lower() in file.lower() for pattern in patterns):
-                    norm_filename = normalize_special_characters(file)
-                    file_path = Path(root) / file # shouldn't be normalised as it is the input file
-                    # Create a subfolder for each file inside the case folder (due to some file formats encompassing multiple files (e.g. msg))
-                    output = output_case_folder / norm_filename
+                    output = output_case_folder / file
                     output.mkdir(parents=True, exist_ok=True)
+                    print(output)
+                    print(file)
                     convert_to_format(file_path, output, args.format, patterns)
+
                     if args.format != "pdf":
-                        print('her')
                         path_to_pdf = Path(output) / f"{file_path.stem}.pdf"
                         convert_pdf_to_images(path_to_pdf, args.format, output)
-                    
+
                     subfolder_has_valid_files = True
 
-            ## If no valid files were found, remove the empty output subfolder
-            # relative_subfolder = Path(root).relative_to(args.input_dir)
-            # output_subfolder = Path(args.output_dir) / relative_subfolder
-            # if not subfolder_has_valid_files and output_subfolder.exists():
-            #    shutil.rmtree(output_subfolder)  # Remove empty output folder
+            # If no valid files were found, remove the empty output subfolder
+            if not subfolder_has_valid_files:
+                shutil.rmtree(output_case_folder)
 
             if subfolder_has_valid_files:
                 pbar.update(
                     1
                 )  # Update progress bar only if the folder had matching files
 
-            
-
             # Clean unwanted files
             clean_unwanted_files(output_case_folder, args.format)
-
-
-    print(
-        f"Conversion to {args.format} completed. Check 'conversion_errors.log' for issues."
-    )
 
 
 if __name__ == "__main__":

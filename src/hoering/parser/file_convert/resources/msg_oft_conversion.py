@@ -413,8 +413,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--patterns",
         help="Comma-separated list of filename patterns to match (e.g., 'ringssvar,ringsvar')",
-        default="ringssvar,ringsvar",
+        default="ringssvar,ringsvar,svar",
     )
 
     args = parser.parse_args()
-    convert_msg_input(args.input_dir, args.output_dir, args.format, args.patterns.split(","))
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir)
+
+    convert_msg_input(input_dir, output_dir, args.format, args.patterns.split(","))
