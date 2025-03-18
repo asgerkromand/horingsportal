@@ -74,21 +74,27 @@ def convert_email_file(
 
     if output_format in ["png", "jpg"]:
         convert_pdf_to_image(pdf_file, output_dir, input_file.stem, output_format)
-
-
+    
 def convert_msg_to_eml(input_file: Path, output_dir: Path) -> Optional[Path]:
     """Converts a .msg or .oft file to .eml format."""
     eml_file = output_dir / f"{input_file.stem}.eml"
+
+    # Ensure the output directory exists before attempting conversion
+    eml_file.parent.mkdir(parents=True, exist_ok=True)  # Create the directory if it doesn't exist
+
     try:
-        subprocess.run(
-            ["msgconvert", "--outfile", str(eml_file), str(input_file)], check=True
+        result = subprocess.run(
+            ["msgconvert", "--outfile", str(eml_file), str(input_file)],
+            check=True,
+            capture_output=True,  # Capture stdout and stderr
         )
         logging.info(f"Converted {input_file} to {eml_file}")
         return eml_file
     except subprocess.CalledProcessError as e:
         logging.error(f"Error converting {input_file} to .eml: {e}")
+        logging.error(f"Standard Output: {e.stdout.decode()}")  # Log stdout
+        logging.error(f"Standard Error: {e.stderr.decode()}")  # Log stderr
         return None
-
 
 def parse_eml_file(
     eml_file: Path, output_dir: Path, patterns: list

@@ -177,3 +177,4 @@ cython_debug/
 data/
 test_files/
 notes/
+output/
