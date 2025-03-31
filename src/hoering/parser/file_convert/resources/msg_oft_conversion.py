@@ -12,12 +12,6 @@ from PyPDF2 import PdfReader, PdfWriter
 from PIL import Image
 import shutil
 
-# Configure logging
-logging.basicConfig(
-    level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-
 class CustomPDF(FPDF):
     def __init__(self):
         super().__init__()
@@ -71,9 +65,8 @@ def convert_email_file(
         return None
 
     pdf_file = create_pdf(email_data, attachments, output_dir, input_file.stem)
-
-    if output_format in ["png", "jpg"]:
-        convert_pdf_to_image(pdf_file, output_dir, input_file.stem, output_format)
+    
+    return pdf_file
     
 def convert_msg_to_eml(input_file: Path, output_dir: Path) -> Optional[Path]:
     """Converts a .msg or .oft file to .eml format."""
@@ -83,7 +76,7 @@ def convert_msg_to_eml(input_file: Path, output_dir: Path) -> Optional[Path]:
     eml_file.parent.mkdir(parents=True, exist_ok=True)  # Create the directory if it doesn't exist
 
     try:
-        result = subprocess.run(
+        subprocess.run(
             ["msgconvert", "--outfile", str(eml_file), str(input_file)],
             check=True,
             capture_output=True,  # Capture stdout and stderr
@@ -202,10 +195,10 @@ def create_pdf(
 
     # Merge with attachments
     if attachments:
-        merged_pdf_file = merge_pdfs(pdf_file, attachments, output_dir, file_stem)
-        return merged_pdf_file
+        merged_pdf_file_name = merge_pdfs(pdf_file, attachments, output_dir, file_stem)
+        return merged_pdf_file_name
 
-    return pdf_file
+    return f'{file_stem}.pdf'
 
 
 def merge_pdfs(
@@ -234,7 +227,7 @@ def merge_pdfs(
         pdf_writer.write(output_pdf)
 
     logging.info(f"Merged PDF created: {merged_pdf_file}")
-    return merged_pdf_file
+    return f"{file_stem}_merged.pdf"
 
 
 def process_attachment(
@@ -362,34 +355,38 @@ def convert_pdf_to_image(
 
 
 def convert_msg_input(
-    input_path: Path, output_base_dir: Path, output_format: str, patterns: list
+    file_folder_name: Path, input_root: Path, output_dir: Path, output_format: str, patterns: list
 ) -> None:
     """Processes the input path (file or folder) and manages output structure."""
+    input_path = input_root / file_folder_name
     if input_path.is_dir():
-        process_folder(input_path, output_base_dir, output_format, patterns)
+        folder_files = process_folder(input_path, output_dir, output_format, patterns)
+        return folder_files
     elif input_path.is_file():
-        process_file(input_path, output_base_dir, output_format, patterns)
+        file = process_file(input_path, output_dir, output_format, patterns)
+        return file
     else:
         logging.error("Invalid input path. Please provide a valid file or folder.")
 
 
 def process_folder(
-    input_folder: Path, output_base_dir: Path, output_format: str, patterns: list
+    input_folder: Path, output_dir: Path, output_format: str, patterns: list
 ) -> None:
     """Processes all .msg and .oft files inside a given folder."""
     files = list(input_folder.glob("*.msg")) + list(input_folder.glob("*.oft"))
     if not files:
         logging.error("No .msg or .oft files found in the directory.")
         return
-
-    case_name = input_folder.name  # Use the folder name as the case name
+    
+    folder_files = []
     for file in files:
         # Create a subfolder for each processed file under the case name
-        output_dir = output_base_dir / case_name / file.stem
+        output_dir = output_dir / file.stem
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        convert_email_file(file, output_dir, patterns, output_format)
-
+        file = convert_email_file(file, output_dir, patterns, output_format)
+        folder_files.append(file)
+    return folder_files
 
 def process_file(
         input_file: Path, output_dir: Path, output_format: str, patterns: list
@@ -399,7 +396,8 @@ def process_file(
         logging.error("Unsupported file format. Please provide a .msg or .oft file.")
         return
 
-    convert_email_file(input_file, output_dir, patterns, output_format)
+    file = convert_email_file(input_file, output_dir, patterns, output_format)
+    return file
 
 
 if __name__ == "__main__":
