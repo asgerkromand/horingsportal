@@ -12,6 +12,15 @@ import zipfile
 import time
 from itertools import islice
 from charset_normalizer import from_path
+import collections
+import json
+from hoering.parser.file_convert.resources.remove_files_rules import match_and_remove_files
+import time
+import concurrent.futures
+import random
+from typing import Optional
+from datetime import datetime
+
 
 # To do: 
 #   Fix outtputted_files so that it can be used in the clean_unwanted_files function
@@ -19,11 +28,11 @@ from charset_normalizer import from_path
 
 
 class FileConverter:
-    def __init__(self, input_dir, output_dir, output_format, patterns):
+    def __init__(self, input_dir, output_dir, output_format, patterns, make_copy=False, copy_sample_size: Optional[int] = None):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.output_format = output_format
-        self.patterns = patterns.split(",")
+        self.patterns = patterns.split(",") if patterns else []
         self.file_extension_summary = {}
 
         # Set up logging
@@ -31,6 +40,10 @@ class FileConverter:
 
         # Validate directories
         self.validate_directories()
+
+        # Optionally make a copy of the input directory
+        if make_copy:
+            self.input_dir = self.make_copy_input_dir(self.input_dir, sample_size=copy_sample_size)
 
         # Create output folder
         self.output_format_dir = self.create_output_folder()
@@ -60,23 +73,62 @@ class FileConverter:
             raise SystemExit
 
     def create_output_folder(self):
-        """Create output folder for the selected format."""
-        output_format_dir = self.output_dir / f"hearing_answer_to_{self.output_format}"
-        output_format_dir.mkdir(parents=True, exist_ok=True)
-        return output_format_dir
+        """Create output folder for the selected format with a timestamp as a nested folder."""
+        # Get current timestamp to make the subfolder unique
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create the main output folder (hearing_answer_to_{self.output_format}) if it doesn't exist
+        main_output_dir = self.output_dir / f"hearing_answer_to_{self.output_format}"
+        main_output_dir.mkdir(parents=True, exist_ok=True)
 
-    def count_files_using_bash(self):
-        """Call the external Bash script to count files that match certain patterns."""
+        # Create the nested folder with the timestamp inside the main output folder
+        timestamped_folder = main_output_dir / timestamp
+        timestamped_folder.mkdir(parents=True, exist_ok=True)
+        
+        return timestamped_folder
+
+    def count_files_by_extension(self, pattern=None):
+        """Counts files in a directory (including nested ones) and groups them by extension.
+        Can filter based on filename substrings or count all files if pattern='all'."""
+
         try:
-            pattern_string = "|".join(self.patterns)  # Convert the patterns list into a single string
+            if isinstance(pattern, list):
+                pattern_string = "|".join(pattern)
+            else: # Counts all files
+                pattern_string = ""
+
+            if not os.path.isdir(self.input_dir):
+                self.logger.error(f"Invalid directory: {self.input_dir}")
+                return {}
+
             bash_command = ["./resources/count_files.sh", str(self.input_dir), pattern_string]
+            self.logger.info(f"Running bash command: {' '.join(bash_command)}")
             result = subprocess.run(bash_command, capture_output=True, text=True, check=True)
-            num_files = int(result.stdout.strip())
-            self.logger.info(f"Found {num_files} matching files.")
-            return num_files
+
+            if result.returncode != 0:
+                self.logger.error(f"Error: {result.stderr}")
+                return {}
+
+            file_counts = collections.defaultdict(int)
+            for line in result.stdout.strip().split("\n"):
+                if line:  # Ensure non-empty line
+                    ext, count = line.rsplit(":", 1)  # Expecting "ext: count" format
+                    file_counts[ext.strip()] += int(count)
+
+            total_count = sum(file_counts.values())
+            print(f"Total files counted: {total_count} in {self.input_dir}")
+            self.logger.info(f"Total files counted: {total_count} in {self.input_dir}")
+            self.logger.info(f"Patterns used: {pattern if pattern else 'None'}")
+
+            self.logger.info(f"File counts by extension: {dict(file_counts)}")
+            return dict(file_counts)
+
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error running Bash script: {e}")
-            return 0
+            return {}
+        except ValueError as e:
+            self.logger.error(f"Unexpected output from Bash script: {result.stdout}, Error: {e}")
+            return {}
         
     def process_directory(self):
             """Process all files in the directory."""
@@ -343,23 +395,126 @@ class FileConverter:
             return Path(new_file_name).name
     
         return Path(file_name).name
+
+    def remove_standard_files(self, input_dir: Path):
+        """Check if the file name contains standard file patterns."""
+        file_remove_log_dir = self.output_dir / "remove_file_logs"
+        match_and_remove_files(input_dir, file_remove_log_dir)
+
+    def make_copy_input_dir(self, input_dir, sample_size: Optional[int] = None):
+        """Create a copy of the input directory with live progress tracking using multithreading."""
+        input_dir_copy = Path(self.input_dir).with_suffix(".copy")
+
+        if input_dir_copy.exists():
+            try:
+                shutil.rmtree(input_dir_copy)
+                self.logger.info(f"Existing copy directory {input_dir_copy} removed.")
+            except Exception as e:
+                self.logger.error(f"Failed to remove existing directory {input_dir_copy}: {e}")
+                return None
+
+        # Gather immediate subdirectories of the input directory
+        subdirs = [d for d in Path(input_dir).iterdir() if d.is_dir()]
+        if sample_size is not None and sample_size < len(subdirs):
+            subdirs = random.sample(subdirs, sample_size)
+
+        # Log the sampled directories
+        self.logger.info(f"Sampled the following {len(subdirs)} subdirectories for copying:")
+        for subdir in subdirs:
+            self.logger.info(f"- {subdir}")
+
+        total_files = sum(
+            len(files)
+            for subdir in subdirs
+            for _, _, files in os.walk(subdir)
+        )
+
+        buffer_size = 1024 * 1024  # 1MB buffer size
+        futures = []
+
+        self.logger.info(f"Copying files from {input_dir} to {input_dir_copy}")
+
+        with concurrent.futures.ThreadPoolExecutor() as executor, tqdm(
+            total=total_files, desc="Copying files", unit="file", dynamic_ncols=True
+        ) as pbar:
+
+            for subdir in subdirs:
+                for root, dirs, files in os.walk(subdir):
+                    relative_root = Path(root).relative_to(input_dir)
+                    new_root = input_dir_copy / relative_root
+                    new_root.mkdir(parents=True, exist_ok=True)
+
+                    for file in files:
+                        src_file = Path(root) / file
+                        dest_file = new_root / file
+                        future = executor.submit(self.copy_file, src_file, dest_file, pbar, buffer_size)
+                        futures.append(future)
+
+            concurrent.futures.wait(futures)
+
+        self.logger.info(f"Finished copying files to {input_dir_copy}")
+        return input_dir_copy
+
+    def copy_file(self, src_file, dest_file, pbar, buffer_size):
+        """Helper function to copy a file with buffering and progress update."""
+        MAX_RETRIES = 5
+        RETRY_DELAYS = [3, 5, 10, 20, 30]  # Differentiated delays between retries (in seconds)
+        retries = 0
+        while retries < MAX_RETRIES:
+            try:
+                with open(src_file, 'rb') as src, open(dest_file, 'wb') as dest:
+                    shutil.copyfileobj(src, dest, buffer_size)
+                pbar.update(1)
+                return
+            except Exception as e:
+                retries += 1
+                self.logger.error(f"Error copying {src_file} to {dest_file}. Attempt {retries}/{MAX_RETRIES}. Error: {e}")
+                if retries < MAX_RETRIES:
+                    self.logger.info(f"Retrying in {RETRY_DELAYS[retries - 1]} seconds...")
+                    time.sleep(RETRY_DELAYS[retries - 1])
+                else:
+                    self.logger.error(f"Failed to copy {src_file} after {MAX_RETRIES} attempts. Skipping.")
+                    return
     
     def run(self):
         """Start the conversion process."""
-        self.process_directory()
+        # Count total number of files (not including folders)
+        total_file_count = self.count_files_by_extension(self.patterns)
+        # Save the file count to a json file
+        with open(self.output_dir / "file_count.json", "w") as f:
+            json.dump(total_file_count, f, indent=4)
+        
+        # Step 1 - Remove files that are not høringssvar for sure
+        self.remove_standard_files(self.input_dir)
+
+        # Step 2 - Parse høringssvar files known to be valid
+        self.logger.info(f"Starting conversion process for files in {self.input_dir}")
+        self.logger.info(f"Output directory: {self.output_format_dir}")
+        self.logger.info(f"Output format: {self.output_format}")
+        self.logger.info(f"Patterns used: {self.patterns}")
+        self.logger.info(f"Total files to process: {total_file_count}")
+        remaining_file_count = self.count_files_by_extension(self.patterns)
+
+
+        # Count how many files left in the directory
+
+        #self.process_directory()
 
 def main():
     parser = argparse.ArgumentParser(description="Convert files to pdf, png, or jpg.")
     parser.add_argument("--input_dir", "-i", required=True, help="Path to the input data directory")
     parser.add_argument("--output_dir", "-o", required=True, help="Path to the output directory")
-    parser.add_argument("--format", '-f', choices=["pdf", "png", "jpg"], help="Output format: pdf, png, or jpg", default="pdf")
-    parser.add_argument("--patterns", help="Comma-separated list of filename patterns to match (e.g., 'ringssvar,ringsvar,svar')", default="ingssvar,ingsvar,svar")
+    parser.add_argument("--make_copy_of_input", "-make_copy", action='store_true', help="Make a copy of the input directory")
+    parser.add_argument("--copy_sample_size", type=int, help="Number of subdirectories to sample when copying", default=None)
+    parser.add_argument("--format", "-f", choices=["pdf", "png", "jpg"], help="Output format: pdf, png, or jpg", default="pdf")
+    parser.add_argument("--patterns", help="Comma-separated list of filename patterns to match (e.g., 'ringssvar,ringsvar,svar')", default="")
 
     args = parser.parse_args()
-    input_dir = Path(args.input_dir)
+    input_dir  = Path(args.input_dir)
     output_dir = Path(args.output_dir)
 
-    converter = FileConverter(input_dir, output_dir, args.format, args.patterns)
+    converter = FileConverter(input_dir, output_dir, args.format, args.patterns, make_copy=args.make_copy_of_input, copy_sample_size=args.copy_sample_size)
+    print(converter.input_dir)
     converter.run()
 
 if __name__ == "__main__":

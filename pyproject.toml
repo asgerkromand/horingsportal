@@ -1,5 +1,5 @@
 [project]
-name = "horing"
+name = "hoering"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -8,7 +8,7 @@ dependencies = [
     "beautifulsoup4==4.12.2",
     "camelot-py==0.11.0",
     "ghostscript==0.7",
-    "horing",
+    "hoering",
     "lxml==4.9.3",
     "numpy==1.26.1",
     "ocrmypdf==15.4.0",

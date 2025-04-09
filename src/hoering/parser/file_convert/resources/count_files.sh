@@ -5,7 +5,9 @@ patterns=$2
 
 # Ensure patterns are properly formatted for grep
 if [ -z "$patterns" ]; then
-    find "$input_dir" -type f | wc -l
+    # If no patterns are provided, count all files by extension
+    find "$input_dir" -type f | sed -E 's/.*\.([^.]+)$/\1/' | sort | uniq -c | awk '{print $2 ": " $1}'
 else
-    find "$input_dir" -type f | grep -iE "$(echo $patterns | sed 's/,/|/g')" | wc -l
+    # If patterns are provided, count files matching the patterns by extension
+    find "$input_dir" -type f | grep -iE "$(echo $patterns | sed 's/,/|/g')" | sed -E 's/.*\.([^.]+)$/\1/' | sort | uniq -c | awk '{print $2 ": " $1}'
 fi
