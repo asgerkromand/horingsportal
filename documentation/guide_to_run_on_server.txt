@@ -1,0 +1,79 @@
+Guide: Running Qwen2.5-VL on the SODAS Server via VS Code
+
+1) Connect via VS Code Remote Explorer
+- Open VS Code and go to Remote Explorer.
+- Under SSH Targets, click on "sodashead" (pre-configured SSH target).
+- This connects to: ssh crm406@sodashead01fl.unicph.domain
+- The password is automatically handled by the "sodashead" setup.
+
+2) Start an Interactive SLURM GPU Session
+Run the following command in the remote VS Code terminal:
+
+srun -w sodasgpun01fl --partition=gpuqueue \
+    --ntasks-per-node=2 \
+    --mem=50GB \
+    --gres=gpu:v100:1 \
+    --time=240 \
+    --pty /bin/bash -i
+
+This starts an interactive GPU session using SLURM.
+
+3) Navigate to Your Project Directory
+By default, you start in: /home/crm406
+
+Navigate to your project folder with:
+
+cd ../../projects/main_compute-AUDIT/people/crm406
+
+4) Ensure Your Python Script Is Available
+
+Right now, the main way is to drag files over to the folder system in VS CODE.
+
+5) Launch the Qwen2.5-VL API using vllm
+
+Use the following command to launch the model server:
+
+nohup vllm serve "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit" \
+  --task=generate \
+  --quantization=bitsandbytes \
+  --host=10.84.10.216 \
+  --port=8899 \
+  --download-dir=/projects/main_compute-AUDIT/data/.cache/huggingface \
+  --dtype=half \
+  --max-model-len=16384 \
+  --allowed-local-media-path=/projects/main_compute-AUDIT/people/crm406/data/hoering_photos \
+  --limit-mm-per-prompt=image=3 \
+  > vllm.log 2>&1 &
+
+Note:
+- You can change the port to 8880 or 8881 if 8899 is in use.
+- This will start the model in offline inference mode.
+- The .cache/huggingface directory makes the model available for all users.
+- (ENCOUNTED ERROR MESSAGE) The context length (16000) of the model is too short to hold the multi-modal embeddings in the worst case (32768 tokens in total, out of which {'image': 16384, 'video': 16384} are reserved for multi-modal embeddings). This may cause certain multi-modal inputs to fail during inference, even when the input text is short. To avoid this, you should increase `max_model_len`, reduce `max_num_seqs`, and/or reduce `mm_counts`.
+  - This is the reason why I have set --max-model-len to 16384
+
+6) Run Your Python Script
+
+Once the model server is running, you can execute your script that interacts with the Qwen2.5-VL model.
+
+Make sure your script is available in the same folder or adjust the path accordingly. Then run:
+
+python your_script.py
+
+This script should send a request to the vllm server running on http://10.84.10.216:<port> (replace <port> with the one you used above).
+
+7) Troubleshooting and Notes
+
+- If you get "Address already in use", change the port (e.g., to 8880, 8881, or 8899).
+- Ensure the model and cache directories exist and are writable.
+- If you encounter out-of-memory (OOM) errors:
+  - Try lowering --max-model-len.
+  - Use fewer GPUs or reduce sequence generation size.
+- You can monitor GPU usage with: nvidia-smi
+- Check
+
+python models/test_script.py \
+  --question "What do these images show?" \
+  --image-folder ./data/test_photos \
+  --verbose \
+  --output-json output.json

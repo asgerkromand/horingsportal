@@ -180,16 +180,16 @@ notes/
 output/
 
 # env files
-.toml
-.lock
+pyproject.toml
+uv.lock
 .python-version
 
 # log files
-.log
-.out
+*.log
+*.out
 
 # Environment files
-.venv
+*.venv
 
 # IDE/editor files
 .vscode/
