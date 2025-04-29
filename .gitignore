@@ -178,3 +178,9 @@ data/
 test_files/
 notes/
 output/
+
+# env files
+.toml
+.lock
+.python-version
+
