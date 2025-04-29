@@ -179,8 +179,19 @@ test_files/
 notes/
 output/
 
-# env files
-.toml
-.lock
+# ignore .venv directories (local virtual environments)
+.venv/
+
+# env files (optional based on your preferences)
+pyproject.toml
+uv.lock
 .python-version
 
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+
+# Python bytecode
+__pycache__/
+*.py[cod]
