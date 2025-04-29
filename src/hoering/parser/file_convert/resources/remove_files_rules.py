@@ -4,8 +4,8 @@ import csv
 import random
 from typing import List, Dict
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
+import pandas as pd
 
 def match_rules(filename: str):
     """Return list of rule matches for a given filename (excluding extension)."""
@@ -138,19 +138,18 @@ def get_matching_files(input_dir: Path) -> List[Dict[str, str]]:
     
     return log_entries, rule_to_filenames
 
-def save_log_to_csv(log_entries: List[Dict[str, str]], output_dir: Path, timestamp: str):
+def save_log_to_csv(log_entries: List[Dict[str, str]], output_dir: Path):
     """Save matched files log to CSV."""
     if log_entries:
-        timestamp_dir = output_dir / timestamp
-        os.makedirs(timestamp_dir, exist_ok=True)
-        log_file = timestamp_dir / f"removal_log_{timestamp}.csv"
+        os.makedirs(output_dir, exist_ok=True)
+        log_file = output_dir / f"removal_log.csv"
         
         with open(log_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=['filename', 'rule', 'description'])
             writer.writeheader()
             writer.writerows(log_entries)
 
-def save_summary_to_csv(rule_to_filenames: defaultdict, output_dir: Path, timestamp: str):
+def save_summary_to_csv(rule_to_filenames: defaultdict, output_dir: Path):
     """Save summary table to CSV."""
     summary_entries = []
     for (rule_num, desc), files in sorted(rule_to_filenames.items()):
@@ -163,9 +162,8 @@ def save_summary_to_csv(rule_to_filenames: defaultdict, output_dir: Path, timest
         })
 
     if summary_entries:
-        timestamp_dir = output_dir / timestamp
-        os.makedirs(timestamp_dir, exist_ok=True)
-        summary_file = timestamp_dir / f"summary_log_{timestamp}.csv"
+        os.makedirs(output_dir, exist_ok=True)
+        summary_file = output_dir / f"summary_log.csv"
         with open(summary_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=['rule', 'description', 'count', 'example_files'])
             writer.writeheader()
@@ -208,14 +206,15 @@ def remove_matched_and_known_files(input_dir: Path, rule_to_filenames: defaultdi
     # Count how many files are to be deleted
     no_matched_files_to_delete = delete_matched_files(rule_to_filenames)
     no_known_files_to_delete = delete_known_named_files(input_dir)
+    total_files_deleted = no_matched_files_to_delete + no_known_files_to_delete
+    print(f"Deleted {no_matched_files_to_delete} matched files and {no_known_files_to_delete} known named files. In total: {total_files_deleted}.")
 
-    print(f"Deleted {no_matched_files_to_delete} matched files and {no_known_files_to_delete} known named files. In total: {no_matched_files_to_delete + no_known_files_to_delete} files deleted.")
+    return total_files_deleted
 
 def process_log_to_csv(output_dir: Path, log_entries: List[Dict[str, str]], rule_to_filenames: defaultdict):
     """Process log entries and save to CSV."""
-    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    save_log_to_csv(log_entries, output_dir, timestamp)
-    save_summary_to_csv(rule_to_filenames, output_dir, timestamp)
+    save_log_to_csv(log_entries, output_dir)
+    save_summary_to_csv(rule_to_filenames, output_dir)
 
 
 def match_and_remove_files(input_dir: Path, output_dir: Path):
@@ -223,4 +222,6 @@ def match_and_remove_files(input_dir: Path, output_dir: Path):
     log_entries, rule_to_filenames = get_matching_files(input_dir)
 
     process_log_to_csv(output_dir, log_entries, rule_to_filenames)
-    remove_matched_and_known_files(input_dir, rule_to_filenames)  # Remove files based on 
+    total_files_deleted = remove_matched_and_known_files(input_dir, rule_to_filenames)  # Remove files based on 
+
+    return total_files_deleted

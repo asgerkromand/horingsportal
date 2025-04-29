@@ -22,10 +22,8 @@ from typing import Optional
 from datetime import datetime
 
 
-# To do: 
-#   Fix outtputted_files so that it can be used in the clean_unwanted_files function
-#   Fix clean_unwanted_files
-
+#Todo Todo Todo: 
+#   Fix process_file function so that i parse converted files and delete them from input afterwards.
 
 class FileConverter:
     def __init__(self, input_dir, output_dir, output_format, patterns, make_copy=False, copy_sample_size: Optional[int] = None):
@@ -34,6 +32,9 @@ class FileConverter:
         self.output_format = output_format
         self.patterns = patterns.split(",") if patterns else []
         self.file_extension_summary = {}
+
+        # Create output folder
+        self.output_format_dir = self.create_output_folder()
 
         # Set up logging
         self.setup_logging()
@@ -44,23 +45,33 @@ class FileConverter:
         # Optionally make a copy of the input directory
         if make_copy:
             self.input_dir = self.make_copy_input_dir(self.input_dir, sample_size=copy_sample_size)
-
-        # Create output folder
-        self.output_format_dir = self.create_output_folder()
+            print(f"Copy of input directory created at {self.input_dir}")
 
     def setup_logging(self):
-        """Setup the logging configuration."""
+        """Setup the logging configuration (file-only, silent in terminal)."""
+        import logging
+        import time
+
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
 
-        log_dir = self.output_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir = self.output_format_dir / "logs"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        handler = logging.FileHandler(log_dir / f"conversion_errors_{time.strftime('%Y%m%d_%H%M%S')}.log")
+        log_file = self.log_dir / f"conversion_errors_{time.strftime('%Y%m%d_%H%M%S')}.log"
+        file_handler = logging.FileHandler(log_file)
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
 
-        self.logger.addHandler(handler)
+        # Remove any existing handlers from this logger
+        if self.logger.hasHandlers():
+            self.logger.handlers.clear()
+
+        # Attach only the file handler (no console handler)
+        self.logger.addHandler(file_handler)
+
+        # Also silence the root logger (optional, for libraries)
+        logging.getLogger().setLevel(logging.CRITICAL + 1)
 
     def validate_directories(self):
         """Check if input and output directories are valid."""
@@ -101,7 +112,8 @@ class FileConverter:
                 self.logger.error(f"Invalid directory: {self.input_dir}")
                 return {}
 
-            bash_command = ["./resources/count_files.sh", str(self.input_dir), pattern_string]
+            path_to_script = Path(__file__).parent / "resources" / "count_files.sh"
+            bash_command = [str(path_to_script.resolve()), str(self.input_dir), pattern_string]
             self.logger.info(f"Running bash command: {' '.join(bash_command)}")
             result = subprocess.run(bash_command, capture_output=True, text=True, check=True)
 
@@ -116,7 +128,6 @@ class FileConverter:
                     file_counts[ext.strip()] += int(count)
 
             total_count = sum(file_counts.values())
-            print(f"Total files counted: {total_count} in {self.input_dir}")
             self.logger.info(f"Total files counted: {total_count} in {self.input_dir}")
             self.logger.info(f"Patterns used: {pattern if pattern else 'None'}")
 
@@ -132,53 +143,75 @@ class FileConverter:
         
     def process_directory(self):
             """Process all files in the directory."""
-            num_files_to_process = self.count_files_using_bash()
-            print(num_files_to_process)
+            file_count_dict = self.count_files_by_extension(self.patterns)
+            total_files_to_parse = sum(file_count_dict.values())
+            print(f"Total 'svar'-files to process: {total_files_to_parse}")
 
-            with tqdm(total=num_files_to_process, desc="Processing Files", unit="file", dynamic_ncols=True, mininterval=0.5) as pbar:
+            outputted_files = []
+            input_filepaths = []
+
+            with tqdm(total=total_files_to_parse, desc="Processing Files", unit="file", dynamic_ncols=True, mininterval=0.5) as pbar:
                 for root, _, files in islice(os.walk(self.input_dir), 100):
                     folder_name = Path(root).name
-                    output_case_folder = self.output_format_dir / folder_name
-                    output_case_folder.mkdir(parents=True, exist_ok=True)
-                    outputted_files = []
-                    print('\n',folder_name)
+                    pattern_output = self.output_format_dir / f'{"_".join(self.patterns)}_pngs'
+                    output_case_folder = pattern_output / folder_name
 
                     for file in files:
-                        file_output = self.process_file(file, Path(root), output_case_folder, pbar)
-                        if isinstance(file_output, list):
+                        file_output, input_filepath_to_be_removed = self.process_file(file, Path(root), output_case_folder, pbar)
+                        if isinstance(file_output, list) and isinstance(input_filepath_to_be_removed, Path):
                             outputted_files.extend(file_output)
-                        if isinstance(file_output, str):
-                            outputted_files.append(file_output)
-
-                    print(outputted_files)
-                    self.clean_unwanted_files(outputted_files, output_case_folder)
-                    self.remove_empty_folder(output_case_folder)
-                    
+                            input_filepaths.append(input_filepath_to_be_removed)
+                        else:
+                            continue
+            
+            return outputted_files, input_filepaths
     
     def process_file(self, file, input_root, output_case_folder, pbar):
         """Process each file."""
         new_file_name = self.manual_fix_filename(input_root, Path(file))
         new_file_name = Path(new_file_name)
 
-        output_files = []
+        file_outputs = []
         if any(pattern.lower() in file.lower() for pattern in self.patterns):
-            file_output = self.convert_to_format(new_file_name, input_root, output_case_folder)
-            if isinstance(file_output, list):
-                file_output = [file.name for file in file_output]
-                output_files.extend(file_output)
-            if isinstance(file_output, Path):
-                output_files.append(file_output.name)
+            output_case_folder.mkdir(parents=True, exist_ok=True)
+            converted_output = self.convert_to_format(new_file_name, input_root, output_case_folder)
+            if isinstance(converted_output, list):
+                converted_output = [file.name for file in converted_output]
+                file_outputs.extend(converted_output)
+            elif isinstance(converted_output, Path):
+                file_outputs.append(converted_output.name)
 
             if self.output_format != "pdf":
                 path_to_pdf = Path(output_case_folder) / f"{new_file_name.stem}.pdf"
                 if path_to_pdf.exists():
-                    image_files = self.convert_pdf_to_images(path_to_pdf, self.output_format, output_case_folder)
-                    output_files.extend(image_files)
+                    image_files = self.convert_pdf_to_png(path_to_pdf, self.output_format, output_case_folder)
+                    file_outputs.extend(image_files)
                 else:
                     self.logger.error(f"PDF file not found for converting to {self.output_format}: {path_to_pdf}")
+            
+            if len(file_outputs) > 0:
+                no_of_files_converted = len(file_outputs)
+                pbar.update(no_of_files_converted)
 
-            pbar.update(1)
-        return output_files
+            # Remove the original file after conversion
+            input_filepath_to_be_removed = Path(input_root) / new_file_name
+            self.remove_parsed_answer_file(input_filepath_to_be_removed)
+        else:
+            input_filepath_to_be_removed = None
+
+        return file_outputs, input_filepath_to_be_removed
+    
+    def remove_parsed_answer_file(self, filepath: Path):
+        """Remove the parsed answer file."""
+        try:
+            if filepath.exists():
+                os.remove(filepath)
+                self.logger.info(f"Removed parsed file: {filepath}")
+            else:
+                self.logger.error(f"File not found for removal: {filepath}")
+        except Exception as e:
+            self.logger.error(f"Error removing file {filepath}: {e}")
+
 
     def convert_to_format(self, file_name: Path, input_root: Path, output_case_folder: Path):
         """Convert different file types to the specified format (pdf, png, or jpg)."""
@@ -335,8 +368,8 @@ class FileConverter:
         except Exception as e:
             self.logger.error(f"Error processing zip file {zip_path}: {e}")
 
-    def convert_pdf_to_images(self, pdf_path, image_format, output_case_folder):
-        """Convert a PDF file to PNG or JPG images."""
+    def convert_pdf_to_png(self, pdf_path, image_format, output_case_folder):
+        """Convert a PDF file to PNG"""
         try:
             images = convert_from_path(pdf_path)
         except Exception as e:
@@ -396,10 +429,11 @@ class FileConverter:
     
         return Path(file_name).name
 
-    def remove_standard_files(self, input_dir: Path):
+    def remove_standard_files(self):
         """Check if the file name contains standard file patterns."""
-        file_remove_log_dir = self.output_dir / "remove_file_logs"
-        match_and_remove_files(input_dir, file_remove_log_dir)
+        no_files_deleted = match_and_remove_files(self.input_dir, self.log_dir)
+
+        return no_files_deleted
 
     def make_copy_input_dir(self, input_dir, sample_size: Optional[int] = None):
         """Create a copy of the input directory with live progress tracking using multithreading."""
@@ -416,6 +450,7 @@ class FileConverter:
         # Gather immediate subdirectories of the input directory
         subdirs = [d for d in Path(input_dir).iterdir() if d.is_dir()]
         if sample_size is not None and sample_size < len(subdirs):
+            random.seed(1704)  # For reproducibility
             subdirs = random.sample(subdirs, sample_size)
 
         # Log the sampled directories
@@ -475,30 +510,51 @@ class FileConverter:
                 else:
                     self.logger.error(f"Failed to copy {src_file} after {MAX_RETRIES} attempts. Skipping.")
                     return
+                
+    def parse_responses(self):
+        """Parse høringssvar files known to be valid."""
+        total_files_left = self.count_files_by_extension()
+        total_pattern_files_to_convert = self.count_files_by_extension(self.patterns)
+        self.logger.info(
+            f"Starting conversion process for files in {self.input_dir}. Output will be saved to {self.output_format_dir}"
+            f"Output format: {self.output_format}"
+            f"Patterns used: {self.patterns}"
+            f"Total files left in the directory: {total_files_left}"
+            f"Total files matching patterns to convert: {total_pattern_files_to_convert}"
+            )
+
+        # Process the directory
+        parsed_files, input_filepaths = self.process_directory()
+        self.logger.info(f"Finished processing files in {self.input_dir}. Output saved to {self.output_format_dir}")
+
+        return total_pattern_files_to_convert
+        
     
     def run(self):
         """Start the conversion process."""
+
+        # Creating tacking list :
+        self.files_deleted = None
+        self.files_known_as_answer = None
+        self.files_predicted_as_answer = None
+
         # Count total number of files (not including folders)
-        total_file_count = self.count_files_by_extension(self.patterns)
+        total_file_count = self.count_files_by_extension()
         # Save the file count to a json file
-        with open(self.output_dir / "file_count.json", "w") as f:
+        with open(self.log_dir / "file_count.json", "w") as f:
             json.dump(total_file_count, f, indent=4)
+
+        # Step 1 - Remove files from input_dir that are not høringssvar based on known file-patterns.
+        no_files_deleted = self.remove_standard_files()
+        self.files_deleted = no_files_deleted
         
-        # Step 1 - Remove files that are not høringssvar for sure
-        self.remove_standard_files(self.input_dir)
-
         # Step 2 - Parse høringssvar files known to be valid
-        self.logger.info(f"Starting conversion process for files in {self.input_dir}")
-        self.logger.info(f"Output directory: {self.output_format_dir}")
-        self.logger.info(f"Output format: {self.output_format}")
-        self.logger.info(f"Patterns used: {self.patterns}")
-        self.logger.info(f"Total files to process: {total_file_count}")
-        remaining_file_count = self.count_files_by_extension(self.patterns)
+        no_pattern_files_converted = self.parse_responses()
+        self.files_known_as_answer = no_pattern_files_converted
 
-
-        # Count how many files left in the directory
-
-        #self.process_directory()
+        # Step 3 - Predict the rest of the files left as being høringssvar or not
+        # no_files_predicted = self.predict_files(self.input_dir, self.output_dir, self.output_format)
+        # self.files_predicted_as_answer = no_files_predicted        
 
 def main():
     parser = argparse.ArgumentParser(description="Convert files to pdf, png, or jpg.")
@@ -507,14 +563,13 @@ def main():
     parser.add_argument("--make_copy_of_input", "-make_copy", action='store_true', help="Make a copy of the input directory")
     parser.add_argument("--copy_sample_size", type=int, help="Number of subdirectories to sample when copying", default=None)
     parser.add_argument("--format", "-f", choices=["pdf", "png", "jpg"], help="Output format: pdf, png, or jpg", default="pdf")
-    parser.add_argument("--patterns", help="Comma-separated list of filename patterns to match (e.g., 'ringssvar,ringsvar,svar')", default="")
+    parser.add_argument("--patterns", help="Comma-separated list of filename patterns to match (e.g., 'svar')", default="")
 
     args = parser.parse_args()
     input_dir  = Path(args.input_dir)
     output_dir = Path(args.output_dir)
 
     converter = FileConverter(input_dir, output_dir, args.format, args.patterns, make_copy=args.make_copy_of_input, copy_sample_size=args.copy_sample_size)
-    print(converter.input_dir)
     converter.run()
 
 if __name__ == "__main__":
