@@ -179,13 +179,17 @@ test_files/
 notes/
 output/
 
-# ignore .venv directories (local virtual environments)
-.venv/
-
-# env files (optional based on your preferences)
-pyproject.toml
-uv.lock
+# env files
+.toml
+.lock
 .python-version
+
+# log files
+.log
+.out
+
+# Environment files
+.venv
 
 # IDE/editor files
 .vscode/
