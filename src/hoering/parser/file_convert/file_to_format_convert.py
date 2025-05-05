@@ -21,7 +21,7 @@ import logging
 
 from hoering.parser.file_convert.resources.msg_oft_conversion import convert_msg_input
 from hoering.parser.file_convert.resources.remove_files_rules import match_and_remove_files
-from vl_openai import ImageClassifier
+from models.vl_openai import ImageClassifier
 
 #Todo Todo Todo:
 #   Fix pbars, so that they make sense.
