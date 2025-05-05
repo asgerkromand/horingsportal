@@ -21,7 +21,7 @@ import logging
 
 from hoering.parser.file_convert.resources.msg_oft_conversion import convert_msg_input
 from hoering.parser.file_convert.resources.remove_files_rules import match_and_remove_files
-from models.vl_openai import ImageClassifier
+from hoering.models.vl_openai import ImageClassifier
 
 #Todo Todo Todo:
 #   Fix pbars, so that they make sense.
@@ -182,7 +182,7 @@ class FileConverter:
             if self.output_format != "pdf":
                 path_to_pdf = Path(output_case_folder) / f"{new_file_name.stem}.pdf"
                 if path_to_pdf.exists():
-                    image_files = self.convert_pdf_to_png(path_to_pdf, self.output_format, output_case_folder)
+                    image_files = self.convert_single_pdf_to_png(path_to_pdf, output_case_folder)
                     file_outputs.extend(image_files)
                 else:
                     self.logger.error(f"PDF file not found for converting to {self.output_format}: {path_to_pdf}")
@@ -366,26 +366,6 @@ class FileConverter:
         except Exception as e:
             self.logger.error(f"Error processing zip file {zip_path}: {e}")
 
-    def convert_pdf_to_png(self, pdf_path, image_format, output_case_folder):
-        """Convert a PDF file to PNG"""
-        try:
-            images = convert_from_path(pdf_path)
-        except Exception as e:
-            self.logger.error(f"Error converting PDF to images: {e}, file: {pdf_path}")
-            return
-        original_file_name = pdf_path.stem
-        original_file_extension = pdf_path.suffix[1:]
-
-        images_file_names = []
-        for i, img in enumerate(images):
-            img.save(
-                Path(output_case_folder)
-                / f"{original_file_name}_{original_file_extension}_{i}.{image_format}",
-                image_format.upper(),
-            )
-            images_file_names.append(f"{original_file_name}_{original_file_extension}_{i}.{image_format}")
-        return images_file_names
-
     def clean_unwanted_files(self, outputted_files, output_case_folder):
             """Clean unwanted files not matching the expected output files."""
             for root, _, files in os.walk(output_case_folder):
@@ -535,72 +515,114 @@ class FileConverter:
         print(f'Processing the remaining files using Qwen classifier. Total files left: {total_files_left_to_parse}')
 
         # Process the directory
-        output_file_names, original_file_names = self.transform_unknowns_into_pdfs()
-        self.logger.info(f"Converted {output_file_names} unknown files to PDF.")
+        file_output_paths, original_file_names = self.transform_unknowns_into_pdfs()
+        self.logger.info(f"Converted {file_output_paths} unknown files to PDF.")
         self.remove_remaining_files(original_file_names)
 
-        return output_file_names, original_file_names
+        # Transform into PNG
+        for file_path in file_output_paths:
+            print(f"Converting {file_path} to PNG.")
+            if file_path.exists():
+                self.convert_single_pdf_to_png(file_path, self.input_dir, method="both")
+                self.logger.info(f"Converted {file_path} to PNG.")
+            else:
+                self.logger.error(f"File not found for conversion: {file_path}")
+
+        return file_output_paths, original_file_names
 
     def transform_unknowns_into_pdfs(self):
-        """Convert unknown file types to PDF."""
-        file_outputs = []
+        """Convert unknown file types to PDF and return their full paths."""
+        file_output_paths = []
         original_file_names = []
 
-        for root, _, files in islice(os.walk(self.input_dir), 100):
+        for root, _, files in os.walk(self.input_dir):
+            root_path = Path(root)
             for file in files:
-                file_path = Path(root) / file  # Full path of the file
-        
-                if file_path.suffix.lower() != ".pdf":
-                    new_file_name = self.manual_fix_filename(Path(root), file_path)
-                    new_file_name = Path(new_file_name)
-                    self.logger.info(f"Converting {file_path} to PDF as {new_file_name.stem}.pdf")
+                file_path = root_path / file  # Full path of the file
 
-                    converted_output = self.convert_to_format(new_file_name, Path(root), Path(root))
-                    original_file_names.append(Path(Path(root) / new_file_name))
+                if file_path.suffix.lower() != ".pdf":
+                    new_file_path = self.manual_fix_filename(root_path, file_path)
+                    new_file_path = Path(new_file_path)
+
+                    self.logger.info(f"Converting {file_path} to PDF as {new_file_path.stem}.pdf")
+
+                    converted_output = self.convert_to_format(new_file_path, root_path, root_path)
+                    original_file_names.append(new_file_path)
 
                     if isinstance(converted_output, list):
-                        converted_output = [str(file.name) for file in converted_output]
-                        file_outputs.extend(converted_output)
+                        # Ensure paths are absolute
+                        converted_paths = [Path(root_path / f.name).resolve() for f in converted_output]
+                        file_output_paths.extend(converted_paths)
                     elif isinstance(converted_output, Path):
-                        file_outputs.append(str(converted_output.name))
+                        file_output_paths.append((root_path / converted_output.name).resolve())
                 else:
-                    # If the file is already a PDF, register as converted
+                    # Already a PDF; add full path
                     self.logger.info(f"File {file_path} is already a PDF. No conversion needed.")
-                    file_outputs.append(file)  # Add the original file name to the outputs
+                    file_output_paths.append(file_path.resolve())
 
-        return file_outputs, original_file_names
+        return file_output_paths, original_file_names
+    
+    def convert_single_pdf_to_png(self, file_path: Path, output_path: Path, method="both") -> list[str]:
+        """
+        Convert a single PDF to PNG(s). Output goes into a subfolder under `output_path`
+        named after the top-level directory the file came from.
 
-    def x1(self, file, input_root, output_case_folder, pbar):
-       """Process each file."""
-       new_file_name = self.manual_fix_filename(input_root, Path(file))
-       new_file_name = Path(new_file_name)
-       file_outputs = []
-       if any(pattern.lower() in file.lower() for pattern in self.patterns):
-           output_case_folder.mkdir(parents=True, exist_ok=True)
-           converted_output = self.convert_to_format(new_file_name, input_root, output_case_folder)
-           if isinstance(converted_output, list):
-               converted_output = [file.name for file in converted_output]
-               file_outputs.extend(converted_output)
-           elif isinstance(converted_output, Path):
-               file_outputs.append(converted_output.name)
-           if self.output_format != "pdf":
-               path_to_pdf = Path(output_case_folder) / f"{new_file_name.stem}.pdf"
-               if path_to_pdf.exists():
-                   image_files = self.convert_pdf_to_png(path_to_pdf, self.output_format, output_case_folder)
-                   file_outputs.extend(image_files)
-               else:
-                   self.logger.error(f"PDF file not found for converting to {self.output_format}: {path_to_pdf}")
-           if len(file_outputs) > 0:
-               no_of_files_converted = len(file_outputs)
-               pbar.update(no_of_files_converted)
-           # Remove the original file after conversion
-           input_filepath_to_be_removed = Path(input_root) / new_file_name
-           self.remove_parsed_answer_file(input_filepath_to_be_removed)
+        Args:
+            file_path (Path): Path to a single PDF file.
+            output_path (Path): Base path where outputs should go.
+            method (str): 'separate', 'combined', or 'both'.
 
-       else:
-           input_filepath_to_be_removed = None
+        Returns:
+            list[str]: List of full paths to generated PNGs.
+        """
+        file_path = file_path.resolve()
+        output_path = output_path.resolve()
 
-       return file_outputs, input_filepath_to_be_removed
+        # Get the folder directly containing the file
+        top_folder_name = file_path.parent.name
+
+        # Append that folder name to the output path
+        full_output_path = output_path / top_folder_name
+        full_output_path.mkdir(parents=True, exist_ok=True)
+
+        output_image_files = []
+
+        try:
+            images = convert_from_path(file_path)
+        except Exception as e:
+            self.logger.error(f"Error converting {file_path}: {e}")
+            return []
+
+        original_file_name = file_path.stem
+        original_file_extension = file_path.suffix[1:]
+
+        if method in ("separate", "both"):
+            for i, img in enumerate(images):
+                file_name = f"{original_file_name}_{original_file_extension}_{i}.png"
+                full_file_path = full_output_path / file_name
+                img.save(full_file_path, "PNG")
+                output_image_files.append(str(full_file_path))
+
+        if method in ("combined", "both"):
+            try:
+                widths, heights = zip(*(img.size for img in images))
+                total_height = sum(heights)
+                max_width = max(widths)
+
+                combined_image = Image.new("RGB", (max_width, total_height), color=(255, 255, 255))
+                y_offset = 0
+                for img in images:
+                    combined_image.paste(img, (0, y_offset))
+                    y_offset += img.size[1]
+
+                combined_filename = f"{original_file_name}_{original_file_extension}_combined.png"
+                combined_path = full_output_path / combined_filename
+                combined_image.save(combined_path, "PNG")
+                output_image_files.append(str(combined_path))
+            except Exception as e:
+                self.logger.error(f"Error combining {file_path.name}: {e}")
+
+        return output_image_files
     
     def remove_remaining_files(self, input_filepaths):
         """Remove files that are left"""
