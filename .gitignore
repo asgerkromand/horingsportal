@@ -179,6 +179,9 @@ test_files/
 notes/
 output/
 
+# repo files
+*.md
+
 # env files
 pyproject.toml
 uv.lock

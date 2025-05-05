@@ -1,29 +1,30 @@
 import os
 import subprocess
-import logging
 from pathlib import Path
 from pdf2image import convert_from_path
 from PIL import Image
 import shutil
 import argparse
 from tqdm import tqdm  # For progress bar
-from hoering.parser.file_convert.resources.msg_oft_conversion import convert_msg_input
 import zipfile
 import time
 from itertools import islice
 from charset_normalizer import from_path
 import collections
 import json
-from hoering.parser.file_convert.resources.remove_files_rules import match_and_remove_files
-import time
 import concurrent.futures
 import random
 from typing import Optional
 from datetime import datetime
+import threading
+import logging
 
+from hoering.parser.file_convert.resources.msg_oft_conversion import convert_msg_input
+from hoering.parser.file_convert.resources.remove_files_rules import match_and_remove_files
+from vl_openai import ImageClassifier
 
-#Todo Todo Todo: 
-#   Fix process_file function so that i parse converted files and delete them from input afterwards.
+#Todo Todo Todo:
+#   Fix pbars, so that they make sense.
 
 class FileConverter:
     def __init__(self, input_dir, output_dir, output_format, patterns, make_copy=False, copy_sample_size: Optional[int] = None):
@@ -32,6 +33,7 @@ class FileConverter:
         self.output_format = output_format
         self.patterns = patterns.split(",") if patterns else []
         self.file_extension_summary = {}
+        self.keep_thinking = True
 
         # Create output folder
         self.output_format_dir = self.create_output_folder()
@@ -49,9 +51,6 @@ class FileConverter:
 
     def setup_logging(self):
         """Setup the logging configuration (file-only, silent in terminal)."""
-        import logging
-        import time
-
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
 
@@ -153,8 +152,7 @@ class FileConverter:
             with tqdm(total=total_files_to_parse, desc="Processing Files", unit="file", dynamic_ncols=True, mininterval=0.5) as pbar:
                 for root, _, files in islice(os.walk(self.input_dir), 100):
                     folder_name = Path(root).name
-                    pattern_output = self.output_format_dir / f'{"_".join(self.patterns)}_pngs'
-                    output_case_folder = pattern_output / folder_name
+                    output_case_folder = self.output_format_dir / folder_name
 
                     for file in files:
                         file_output, input_filepath_to_be_removed = self.process_file(file, Path(root), output_case_folder, pbar)
@@ -450,7 +448,7 @@ class FileConverter:
         # Gather immediate subdirectories of the input directory
         subdirs = [d for d in Path(input_dir).iterdir() if d.is_dir()]
         if sample_size is not None and sample_size < len(subdirs):
-            random.seed(1704)  # For reproducibility
+            random.seed(170497)  # For reproducibility
             subdirs = random.sample(subdirs, sample_size)
 
         # Log the sampled directories
@@ -511,7 +509,7 @@ class FileConverter:
                     self.logger.error(f"Failed to copy {src_file} after {MAX_RETRIES} attempts. Skipping.")
                     return
                 
-    def parse_responses(self):
+    def parse_responses_from_patterns(self):
         """Parse høringssvar files known to be valid."""
         total_files_left = self.count_files_by_extension()
         total_pattern_files_to_convert = self.count_files_by_extension(self.patterns)
@@ -528,12 +526,115 @@ class FileConverter:
         self.logger.info(f"Finished processing files in {self.input_dir}. Output saved to {self.output_format_dir}")
 
         return total_pattern_files_to_convert
-        
     
+    def parse_response_from_vl_classfier(self):
+        """Parse høringssvar files using Qwen classification."""
+        # Count how many files are left in the directory
+        total_files_left = self.count_files_by_extension()
+        total_files_left_to_parse = sum(total_files_left.values())
+        print(f'Processing the remaining files using Qwen classifier. Total files left: {total_files_left_to_parse}')
+
+        # Process the directory
+        output_file_names, original_file_names = self.transform_unknowns_into_pdfs()
+        self.logger.info(f"Converted {output_file_names} unknown files to PDF.")
+        self.remove_remaining_files(original_file_names)
+
+        return output_file_names, original_file_names
+
+    def transform_unknowns_into_pdfs(self):
+        """Convert unknown file types to PDF."""
+        file_outputs = []
+        original_file_names = []
+
+        for root, _, files in islice(os.walk(self.input_dir), 100):
+            for file in files:
+                file_path = Path(root) / file  # Full path of the file
+        
+                if file_path.suffix.lower() != ".pdf":
+                    new_file_name = self.manual_fix_filename(Path(root), file_path)
+                    new_file_name = Path(new_file_name)
+                    self.logger.info(f"Converting {file_path} to PDF as {new_file_name.stem}.pdf")
+
+                    converted_output = self.convert_to_format(new_file_name, Path(root), Path(root))
+                    original_file_names.append(Path(Path(root) / new_file_name))
+
+                    if isinstance(converted_output, list):
+                        converted_output = [str(file.name) for file in converted_output]
+                        file_outputs.extend(converted_output)
+                    elif isinstance(converted_output, Path):
+                        file_outputs.append(str(converted_output.name))
+                else:
+                    # If the file is already a PDF, register as converted
+                    self.logger.info(f"File {file_path} is already a PDF. No conversion needed.")
+                    file_outputs.append(file)  # Add the original file name to the outputs
+
+        return file_outputs, original_file_names
+
+    def x1(self, file, input_root, output_case_folder, pbar):
+       """Process each file."""
+       new_file_name = self.manual_fix_filename(input_root, Path(file))
+       new_file_name = Path(new_file_name)
+       file_outputs = []
+       if any(pattern.lower() in file.lower() for pattern in self.patterns):
+           output_case_folder.mkdir(parents=True, exist_ok=True)
+           converted_output = self.convert_to_format(new_file_name, input_root, output_case_folder)
+           if isinstance(converted_output, list):
+               converted_output = [file.name for file in converted_output]
+               file_outputs.extend(converted_output)
+           elif isinstance(converted_output, Path):
+               file_outputs.append(converted_output.name)
+           if self.output_format != "pdf":
+               path_to_pdf = Path(output_case_folder) / f"{new_file_name.stem}.pdf"
+               if path_to_pdf.exists():
+                   image_files = self.convert_pdf_to_png(path_to_pdf, self.output_format, output_case_folder)
+                   file_outputs.extend(image_files)
+               else:
+                   self.logger.error(f"PDF file not found for converting to {self.output_format}: {path_to_pdf}")
+           if len(file_outputs) > 0:
+               no_of_files_converted = len(file_outputs)
+               pbar.update(no_of_files_converted)
+           # Remove the original file after conversion
+           input_filepath_to_be_removed = Path(input_root) / new_file_name
+           self.remove_parsed_answer_file(input_filepath_to_be_removed)
+
+       else:
+           input_filepath_to_be_removed = None
+
+       return file_outputs, input_filepath_to_be_removed
+    
+    def remove_remaining_files(self, input_filepaths):
+        """Remove files that are left"""
+        removed_files = []
+        for input_filepath in input_filepaths:
+            try:
+                if input_filepath.exists():
+                    os.remove(input_filepath)
+                    removed_files.append(input_filepath)
+                else:
+                    self.logger.error(f"File not found for removal: {input_filepath}")
+            except Exception as e:
+                self.logger.error(f"Error removing file {input_filepath}: {e}")
+        self.logger.info(f"Removed {len(removed_files)} original that has been converted into pdf: {removed_files}")
+
+    def start_thinking_thread(self):
+        thread = threading.Thread(target=self.think_about_moni_loop, daemon=True)
+        thread.start()
+
+    def think_about_moni_loop(self):
+        while self.keep_thinking:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Thinking about Monii...")
+            time.sleep(300 - datetime.now().second)  # Sync with the start of the next minute
+    
+    def stop_thinking_thread(self):
+        """Sets keep_thinking to False to stop the thinking thread gracefully"""
+        self.keep_thinking = False
+                    
     def run(self):
         """Start the conversion process."""
 
-        # Creating tacking list :
+        self.start_thinking_thread()
+        
+        # Creating tacking list:
         self.files_deleted = None
         self.files_known_as_answer = None
         self.files_predicted_as_answer = None
@@ -549,21 +650,24 @@ class FileConverter:
         self.files_deleted = no_files_deleted
         
         # Step 2 - Parse høringssvar files known to be valid
-        no_pattern_files_converted = self.parse_responses()
+        no_pattern_files_converted = self.parse_responses_from_patterns()
         self.files_known_as_answer = no_pattern_files_converted
 
-        # Step 3 - Predict the rest of the files left as being høringssvar or not
-        # no_files_predicted = self.predict_files(self.input_dir, self.output_dir, self.output_format)
-        # self.files_predicted_as_answer = no_files_predicted        
+        # Step 3 - Convert remaining files to pdf
+        self.parse_response_from_vl_classfier()
+
+        self.stop_thinking_thread()
+        print("Monii will be back soon.")
+               
 
 def main():
     parser = argparse.ArgumentParser(description="Convert files to pdf, png, or jpg.")
     parser.add_argument("--input_dir", "-i", required=True, help="Path to the input data directory")
     parser.add_argument("--output_dir", "-o", required=True, help="Path to the output directory")
     parser.add_argument("--make_copy_of_input", "-make_copy", action='store_true', help="Make a copy of the input directory")
-    parser.add_argument("--copy_sample_size", type=int, help="Number of subdirectories to sample when copying", default=None)
+    parser.add_argument("--copy_sample_size", "-sample_size", type=int, help="Number of subdirectories to sample when copying", default=None)
     parser.add_argument("--format", "-f", choices=["pdf", "png", "jpg"], help="Output format: pdf, png, or jpg", default="pdf")
-    parser.add_argument("--patterns", help="Comma-separated list of filename patterns to match (e.g., 'svar')", default="")
+    parser.add_argument("--patterns", "-p", help="Comma-separated list of filename patterns to match (e.g., 'svar')", default="")
 
     args = parser.parse_args()
     input_dir  = Path(args.input_dir)
