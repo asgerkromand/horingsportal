@@ -179,6 +179,9 @@ test/
 notes/
 output/
 
+# conda
+/miniconda3
+
 # repo files
 *.md
 

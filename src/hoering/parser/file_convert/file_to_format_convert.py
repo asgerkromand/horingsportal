@@ -521,7 +521,7 @@ class FileConverter:
 
         # Transform into PNG
         for file_path in file_output_paths:
-            print(f"Converting {file_path} to PNG.")
+            self.logger.info(f"Converting {file_path} to PNG.")
             if file_path.exists():
                 self.convert_single_pdf_to_png(file_path, self.input_dir, method="both")
                 self.logger.info(f"Converted {file_path} to PNG.")
@@ -588,7 +588,7 @@ class FileConverter:
         output_image_files = []
 
         try:
-            images = convert_from_path(file_path)
+            images = convert_from_path(file_path, poppler_path="/projects/main_compute-AUDIT/people/crm406/miniconda3/bin")
         except Exception as e:
             self.logger.error(f"Error converting {file_path}: {e}")
             return []
@@ -684,10 +684,10 @@ class FileConverter:
 
 def main():
     parser = argparse.ArgumentParser(description="Convert files to pdf, png, or jpg.")
-    parser.add_argument("--input_dir", "-i", required=True, help="Path to the input data directory")
-    parser.add_argument("--output_dir", "-o", required=True, help="Path to the output directory")
-    parser.add_argument("--make_copy_of_input", "-make_copy", action='store_true', help="Make a copy of the input directory")
-    parser.add_argument("--copy_sample_size", "-sample_size", type=int, help="Number of subdirectories to sample when copying", default=None)
+    parser.add_argument("--input-dir", "-i", required=True, help="Path to the input data directory")
+    parser.add_argument("--output-dir", "-o", required=True, help="Path to the output directory")
+    parser.add_argument("--make-copy-of-input", "-copy", action='store_true', help="Make a copy of the input directory")
+    parser.add_argument("--copy-sample-size", "-sample", type=int, help="Number of subdirectories to sample when copying", default=None)
     parser.add_argument("--format", "-f", choices=["pdf", "png", "jpg"], help="Output format: pdf, png, or jpg", default="pdf")
     parser.add_argument("--patterns", "-p", help="Comma-separated list of filename patterns to match (e.g., 'svar')", default="")
 
