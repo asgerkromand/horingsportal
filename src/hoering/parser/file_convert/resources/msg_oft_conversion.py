@@ -67,26 +67,28 @@ def convert_email_file(
     pdf_file = create_pdf(email_data, attachments, output_dir, input_file.stem)
     
     return pdf_file
-    
-def convert_msg_to_eml(input_file: Path, output_dir: Path) -> Optional[Path]:
+
+def convert_msg_to_eml(input_file: Path, output_dir: Path, msgconvert_path: str = "/projects/main_compute-AUDIT/people/crm406/perl5/bin/msgconvert") -> Optional[Path]:
     """Converts a .msg or .oft file to .eml format."""
     eml_file = output_dir / f"{input_file.stem}.eml"
-
-    # Ensure the output directory exists before attempting conversion
-    eml_file.parent.mkdir(parents=True, exist_ok=True)  # Create the directory if it doesn't exist
+    eml_file.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        subprocess.run(
-            ["msgconvert", "--outfile", str(eml_file), str(input_file)],
+        result = subprocess.run(
+            [msgconvert_path, "--outfile", str(eml_file), str(input_file)],
             check=True,
-            capture_output=True,  # Capture stdout and stderr
+            capture_output=True,
+            text=True  # Automatically decode stdout/stderr to string
         )
         logging.info(f"Converted {input_file} to {eml_file}")
+        logging.debug(f"stdout: {result.stdout}")
+        logging.debug(f"stderr: {result.stderr}")
         return eml_file
+
     except subprocess.CalledProcessError as e:
         logging.error(f"Error converting {input_file} to .eml: {e}")
-        logging.error(f"Standard Output: {e.stdout.decode()}")  # Log stdout
-        logging.error(f"Standard Error: {e.stderr.decode()}")  # Log stderr
+        logging.error(f"Standard Output: {e.stdout}")
+        logging.error(f"Standard Error: {e.stderr}")
         return None
 
 def parse_eml_file(

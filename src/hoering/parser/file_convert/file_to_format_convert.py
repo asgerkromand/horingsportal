@@ -24,7 +24,9 @@ from hoering.parser.file_convert.resources.remove_files_rules import match_and_r
 from hoering.models.vl_openai import ImageClassifier
 
 #Todo Todo Todo:
-#   Fix pbars, so that they make sense.
+#   Something wrong with msg. Check as an example: 2025-05-13 16:37:25,450 - ERROR - PDF file not found for converting to png: output/hearing_answer_to_png/20250513_162735/38934/hoeringssvar_fra_3f.pdf
+#                                                  2025-05-13 16:37:25,453 - INFO - Removed parsed file: data/hearings.copy/38934/hoeringssvar_fra_3f.msg
+
 
 class FileConverter:
     def __init__(self, input_dir, output_dir, output_format, patterns, make_copy=False, copy_sample_size: Optional[int] = None):
@@ -150,12 +152,12 @@ class FileConverter:
             input_filepaths = []
 
             with tqdm(total=total_files_to_parse, desc="Processing Files", unit="file", dynamic_ncols=True, mininterval=0.5) as pbar:
-                for root, _, files in islice(os.walk(self.input_dir), 100):
+                for root, _, files in os.walk(self.input_dir):
                     folder_name = Path(root).name
                     output_case_folder = self.output_format_dir / folder_name
 
                     for file in files:
-                        file_output, input_filepath_to_be_removed = self.process_file(file, Path(root), output_case_folder, pbar)
+                        file_output, input_filepath_to_be_removed = self.process_file(Path(file), Path(root), output_case_folder, pbar)
                         if isinstance(file_output, list) and isinstance(input_filepath_to_be_removed, Path):
                             outputted_files.extend(file_output)
                             input_filepaths.append(input_filepath_to_be_removed)
@@ -164,15 +166,13 @@ class FileConverter:
             
             return outputted_files, input_filepaths
     
-    def process_file(self, file, input_root, output_case_folder, pbar):
+    def process_file(self, file: Path, input_root: Path, output_case_folder, pbar):
         """Process each file."""
-        new_file_name = self.manual_fix_filename(input_root, Path(file))
-        new_file_name = Path(new_file_name)
-
         file_outputs = []
-        if any(pattern.lower() in file.lower() for pattern in self.patterns):
+        file_name = file.name
+        if any(pattern.lower() in file_name.lower() for pattern in self.patterns):
             output_case_folder.mkdir(parents=True, exist_ok=True)
-            converted_output = self.convert_to_format(new_file_name, input_root, output_case_folder)
+            converted_output = self.convert_to_format(file, input_root, output_case_folder)
             if isinstance(converted_output, list):
                 converted_output = [file.name for file in converted_output]
                 file_outputs.extend(converted_output)
@@ -180,7 +180,7 @@ class FileConverter:
                 file_outputs.append(converted_output.name)
 
             if self.output_format != "pdf":
-                path_to_pdf = Path(output_case_folder) / f"{new_file_name.stem}.pdf"
+                path_to_pdf = Path(output_case_folder) / f"{file.stem}.pdf"
                 if path_to_pdf.exists():
                     image_files = self.convert_single_pdf_to_png(path_to_pdf, output_case_folder)
                     file_outputs.extend(image_files)
@@ -192,7 +192,7 @@ class FileConverter:
                 pbar.update(no_of_files_converted)
 
             # Remove the original file after conversion
-            input_filepath_to_be_removed = Path(input_root) / new_file_name
+            input_filepath_to_be_removed = Path(input_root) / file
             self.remove_parsed_answer_file(input_filepath_to_be_removed)
         else:
             input_filepath_to_be_removed = None
@@ -204,7 +204,6 @@ class FileConverter:
         try:
             if filepath.exists():
                 os.remove(filepath)
-                self.logger.info(f"Removed parsed file: {filepath}")
             else:
                 self.logger.error(f"File not found for removal: {filepath}")
         except Exception as e:
@@ -304,17 +303,25 @@ class FileConverter:
         except Exception as e:
             self.logger.error(f"Failed to re-encode {input_path}: {e}")
 
-    def convert_doc_to_pdf(self, file_name: Path, input_dir: Path, output_dir: Path):
-        """Convert standard document formats (.txt, .doc, .docx, etc.) to PDF."""
+    
+    def convert_doc_to_pdf(self, file_name: Path, input_dir: Path, output_dir: Path) -> Path:
         input_path = input_dir / file_name
-        subprocess.run(
+        output_pdf = output_dir / f"{file_name.stem}.pdf"
+    
+        result = subprocess.run(
             [
                 "soffice", "--headless", "--convert-to", "pdf",
                 "--outdir", str(output_dir), str(input_path)
             ],
-            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
-        return f"{file_name.stem}.pdf"
+        if result.returncode != 0:
+            raise RuntimeError(f"LibreOffice failed:\n{result.stderr}")
+        if not output_pdf.exists():
+            raise FileNotFoundError(f"PDF not created: {output_pdf}")
+        return output_pdf
     
     def image_to_pdf(self, file_name: Path, input_root: Path, output_case_folder: Path, output_format):
         """Convert an .tif, .jpg, .jpeg, .png to a PDF file."""
@@ -366,15 +373,6 @@ class FileConverter:
         except Exception as e:
             self.logger.error(f"Error processing zip file {zip_path}: {e}")
 
-    def clean_unwanted_files(self, outputted_files, output_case_folder):
-            """Clean unwanted files not matching the expected output files."""
-            for root, _, files in os.walk(output_case_folder):
-                for file in files:
-                    if file not in outputted_files:
-                        file_path = Path(root) / file
-                        os.remove(file_path)
-                        self.logger.info(f"Removed unwanted file: {file_path}")
-
     def track_output_files(self, file_path):
             """Track the output files and their original extensions."""
             original_extension = file_path.suffix.lower()
@@ -389,23 +387,36 @@ class FileConverter:
             os.rmdir(output_case_folder)
             self.logger.info(f"Removed empty folder: {output_case_folder}")
 
-    def manual_fix_filename(self, file_input_dir: Path, file_name: Path) -> str:
-        """Manually fix known corrupted characters in filenames."""
-        file_stem, extension = file_name.stem, file_name.suffix.lower()
-        fixed_file_stem = file_stem.replace("�", "oe").replace("H�ringssvar", "Hoeringssvar").lower()
+    def manual_fix_filename(self, file_input: Path) -> None:
+        """
+        Fix known corrupted characters in the filename.
+        If changes are made, rename the file on disk.
+        """
+        file_stem, extension = file_input.stem, file_input.suffix.lower()
+        fixed_file_stem = file_stem.replace("�", "oe").lower()
 
         if fixed_file_stem != file_stem:
-            old_file_name = file_name.name
-            new_file_name = f'{fixed_file_stem}{extension}'
-            old_file_path = file_input_dir / old_file_name
-            new_file_path = file_input_dir / new_file_name
-            if old_file_path.exists():
-                os.rename(old_file_path, new_file_path)
+            new_file_name = f"{fixed_file_stem}{extension}"
+            new_file_path = file_input.parent / new_file_name
+
+            if file_input.exists():
+                os.rename(file_input, new_file_path)
+                return True
             else:
-                self.logger.error(f"File not found: {old_file_path}")
-            return Path(new_file_name).name
-    
-        return Path(file_name).name
+                self.logger.error(f"File not found: {file_input}")
+                return False
+
+    def rename_all_files(self):
+        """Rename all files in the input directory to avoid special characters."""
+        filename_change_count = 0
+        for root, _, files in os.walk(self.input_dir):
+            for file in files:
+                file_path = Path(root) / file
+                file_name_was_changed = self.manual_fix_filename(file_path)
+                if file_name_was_changed:
+                    filename_change_count += 1
+        
+        self.logger.info(f"Renamed {filename_change_count} files to avoid special characters.")
 
     def remove_standard_files(self):
         """Check if the file name contains standard file patterns."""
@@ -538,26 +549,22 @@ class FileConverter:
         for root, _, files in os.walk(self.input_dir):
             root_path = Path(root)
             for file in files:
-                file_path = root_path / file  # Full path of the file
+                file = Path(file)
+                file_path = Path(root_path / file)
 
                 if file_path.suffix.lower() != ".pdf":
-                    new_file_path = self.manual_fix_filename(root_path, file_path)
-                    new_file_path = Path(new_file_path)
-
-                    self.logger.info(f"Converting {file_path} to PDF as {new_file_path.stem}.pdf")
-
-                    converted_output = self.convert_to_format(new_file_path, root_path, root_path)
-                    original_file_names.append(new_file_path)
+                    self.logger.info(f"Converting {file_path} to PDF as {file_path.stem}.pdf")
+                    converted_output = self.convert_to_format(file, root_path, root_path)
+                    original_file_names.append(file_path)
 
                     if isinstance(converted_output, list):
-                        # Ensure paths are absolute
                         converted_paths = [Path(root_path / f.name).resolve() for f in converted_output]
                         file_output_paths.extend(converted_paths)
                     elif isinstance(converted_output, Path):
                         file_output_paths.append((root_path / converted_output.name).resolve())
                 else:
                     # Already a PDF; add full path
-                    self.logger.info(f"File {file_path} is already a PDF. No conversion needed.")
+                    self.logger.info(f"File {root_path / file} is already a PDF. New filepath is {file_path}. No conversion needed.")
                     file_output_paths.append(file_path.resolve())
 
         return file_output_paths, original_file_names
@@ -644,7 +651,7 @@ class FileConverter:
 
     def think_about_moni_loop(self):
         while self.keep_thinking:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Thinking about Monii...")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Thinking about Moniii...")
             time.sleep(300 - datetime.now().second)  # Sync with the start of the next minute
     
     def stop_thinking_thread(self):
@@ -666,6 +673,9 @@ class FileConverter:
         # Save the file count to a json file
         with open(self.log_dir / "file_count.json", "w") as f:
             json.dump(total_file_count, f, indent=4)
+
+        # Step 0 - Rename all files
+        self.rename_all_files()
 
         # Step 1 - Remove files from input_dir that are not høringssvar based on known file-patterns.
         no_files_deleted = self.remove_standard_files()
