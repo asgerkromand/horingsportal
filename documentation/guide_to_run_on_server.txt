@@ -41,8 +41,8 @@ nohup vllm serve "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit" \
   --download-dir=/projects/main_compute-AUDIT/data/.cache/huggingface \
   --dtype=half \
   --max-model-len=16384 \
-  --allowed-local-media-path=/projects/main_compute-AUDIT/people/crm406/data/hoering_photos \
-  --limit-mm-per-prompt=image=3 \
+  --limit-mm-per-prompt=image=4 \
+  --seed 170497 \
   > vllm.log 2>&1 &
 
 Note:
@@ -70,10 +70,3 @@ This script should send a request to the vllm server running on http://10.84.10.
   - Try lowering --max-model-len.
   - Use fewer GPUs or reduce sequence generation size.
 - You can monitor GPU usage with: nvidia-smi
-- Check
-
-python models/test_script.py \
-  --question "What do these images show?" \
-  --image-folder ./data/test_photos \
-  --verbose \
-  --output-json output.json

@@ -1,0 +1,85 @@
+Version #1 21/5 - mislabels one 0
+    "You will receive multiple consecutive images (pages) from a single document.
+    
+    Classify the entire document based on its content as follows:
+    - Label 0: The document is not a response (e.g., draft law, memo, agenda, internal letter).
+    - Label 1: The document is a formal response to a political consultation/hearing (called a høringssvar; note that it is sometimes misspelled as høringsvar).
+    - Label 2: The content is illegible or too ambiguous to determine the classification.
+    
+    Strong indicators to assign label 0:
+    - It initiates or invites input from others rather than providing it — for example, sharing a draft and asking for "bemærkninger" or "svar" (feedback), or documents mentioning “høring” or “høringssvar” that serve to start or invite the hearing process rather than contribute to it.
+    - The document is a draft law, regulation, explanatory note, or technical annex.
+    - It is an internal memo, administrative notice, or cover letter not intended as a formal response.
+    
+    Strong indicators to assign label 1:
+    - The words “høringssvar” or “høringsvar” appear, and the document is framed as a response.
+    - The terms “bemærkninger” or “bemærkning” are used in the context of providing feedback - NOT asking for it (important).
+    - The document contains opinions, comments, or feedback (positive, negative, or neutral), including statements like “vi har ingen bemærkninger.”
+    - The document is addressed to or references a hearing process (“høring”) and clearly intends to contribute to it.
+    
+    Base your classification on the document as a whole."
+
+
+Here are some examples:
+
+Example 1: 
+Document: "Fra: Henriette Fagerberg Erichsen <hfe@advokatsamfundet.dk>  
+Sendt: 24. august 2020 12:48 
+Til: Lise Wesenberg Jensen <lwj@ens.dk>; Energistyrelsens officielle postkasse <ENS@ENS.DK>; Torsten Duer 
+<tsd@ens.dk> 
+Emne: Sv: Høring - lovforslag om spildevandsforsyningsselskabernes klimatilpasning - høringsfrist 13. september 
+2020 (Sagsnr.: 2020 - 3) 
+ 
+Tak for henvendelsen.  
+Advokatrådet har besluttet ikke at afgive høringssvar.  
+ 
+Med venlig hilsen 
+
+Henriette Fagerberg Erichsen 
+Sekretær 
+Advokatsamfundet, Kronprinsessegade 28, 1306 København K 
+D +45 33 96 97 28 
+hfe@advokatsamfundet.dk - www.advokatsamfundet.dk"
+Label: 1
+
+---
+
+Example 2:
+Document: "Domstolsstyrelsen
+Skatteministeriet
+pskper@skm.dk
+[...] 25. marts 2009
+Forårspakke 2.0
+Skatteministeriet har i en e-mail af 24. marts 2009 anmodet Domstolsstyrelsen om eventuelle bemærkninger til de udkast til lovforslag, der udmønter Forårspakke 2.0.
+Vi har ikke bemærkninger til de fremsendte udkast til lovforslag.
+Med venlig hilsen
+Niels Juhl"
+Label: 1
+
+---
+
+Example 3
+Document: "Draft
+COMMISSION REGULATION
+of
+amending Regulation (EC) No 1924/2006 of the European Parliament and of the Council 
+with regard to the list of nutrition claims
+(Text with EEA relevance)
+THE COMMISSION OF THE EUROPEAN COMMUNITIES,"
+Label: 0
+
+---
+
+Example 4
+Document: Regelændringer som følge af ændringer af arbejdsmiljøloven (Justering 
+af screening, rådgivning og smiley-ordningen m.v.) 
+I forbindelse med ændringerne af arbejdsmiljøloven skal reglerne vedrørende 
+rådgivning, autoriserede arbejdsmiljørådgivere og smiley-ordningen ændres.
+Det drejer sig om 
+1) udkast til en ny bekendtgørelse om rådgivningspåbud
+2) ændring af bekendtgørelse nr. 555 af 17. juni 2004 om autorisation af 
+arbejdsmiljørådgivere til at bistå virksomheder med efterkommelse af 
+påbud om brug af rådgivning, og
+3) ændring af bekendtgørelse nr. 1497 af 20. december 2004 om 
+offentliggørelse af virksomhedernes arbejdsmiljø mv. (Smiley-ordning).
+Label: 0

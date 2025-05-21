@@ -1,0 +1,29 @@
+You will receive multiple consecutive images (pages) from a single document.
+
+Classify the entire document using these labels:
+
+Label 0: The document is NOT a response. Examples:
+- A draft law, regulation, explanatory note, or technical annex.
+- An invitation to give input (e.g., it shares a draft and asks for “bemærkninger” or feedback).
+- An internal memo, administrative notice, or cover letter.
+- It mentions “høring” or “høringssvar”, but is initiating or inviting a hearing — NOT responding to one.
+
+Label 1: The document IS a formal response to a political consultation/hearing (a “høringssvar”).
+Examples:
+- It uses the term “høringssvar” or “høringsvar” and is framed as feedback.
+- It contains comments, opinions, or input (e.g., “vi har ingen bemærkninger”).
+- “Bemærkninger” is used to *give* feedback — not request it.
+- The document clearly contributes to a hearing or consultation process.
+
+Label 2: The content is illegible or too ambiguous to determine.
+
+----------------------------------------
+CRITICAL DISTINCTION:
+
+⚠️ If the document ASKS FOR feedback → Label 0  
+(e.g., “vi beder om bemærkninger” or “send svar senest…”)
+
+✅ If the document GIVES feedback → Label 1  
+(e.g., “vores bemærkninger er…” or “vi har ingen bemærkninger”)
+
+Always classify based on the document’s OVERALL PURPOSE.

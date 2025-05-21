@@ -24,8 +24,8 @@ from hoering.parser.file_convert.resources.remove_files_rules import match_and_r
 from hoering.models.vl_openai import ImageClassifier
 
 #Todo Todo Todo:
-#   Something wrong with msg. Check as an example: 2025-05-13 16:37:25,450 - ERROR - PDF file not found for converting to png: output/hearing_answer_to_png/20250513_162735/38934/hoeringssvar_fra_3f.pdf
-#                                                  2025-05-13 16:37:25,453 - INFO - Removed parsed file: data/hearings.copy/38934/hoeringssvar_fra_3f.msg
+#1 - Update processbar for "Processing Files"
+#2 - Fix output paths. PNGs are are not saved in the correct folder. 
 
 
 class FileConverter:
